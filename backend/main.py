@@ -19,7 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    print("⚠️ WARNING: OPENAI_API_KEY is not set in environment variables!")
+
+client = OpenAI(api_key=api_key)
 
 class ReviewRequest(BaseModel):
     google_docs_url: str
