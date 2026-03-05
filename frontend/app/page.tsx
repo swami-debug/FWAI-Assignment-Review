@@ -48,7 +48,7 @@ export default function Home() {
     setError("");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/review", {
+      const response = await fetch("https://fwai-assignment-review-4.onrender.com/review", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
