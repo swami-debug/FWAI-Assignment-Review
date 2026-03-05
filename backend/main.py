@@ -19,11 +19,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    print("⚠️ WARNING: OPENAI_API_KEY is not set in environment variables!")
+import logging
 
-client = OpenAI(api_key=api_key)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+api_key = os.getenv("OPENAI_API_KEY")
+client = None
+
+if not api_key:
+    logger.error("❌ CRITICAL: OPENAI_API_KEY is not set. AI features will fail.")
+else:
+    try:
+        client = OpenAI(api_key=api_key)
+        logger.info("✅ OpenAI client initialized successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize OpenAI client: {e}")
 
 class ReviewRequest(BaseModel):
     google_docs_url: str
@@ -47,6 +59,12 @@ def fetch_doc_content(doc_id: str):
 
 @app.post("/review")
 async def review_assignment(request: ReviewRequest):
+    if not client:
+        raise HTTPException(
+            status_code=500, 
+            detail="AI Service is currently unavailable. Please ensure the OPENAI_API_KEY is configured in Render environment variables."
+        )
+    
     doc_id = extract_doc_id(request.google_docs_url)
     content = fetch_doc_content(doc_id)
     
