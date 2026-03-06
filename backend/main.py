@@ -1,9 +1,10 @@
 import os
+import io
+import json
+import logging
 import re
-import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -11,7 +12,6 @@ load_dotenv()
 
 app = FastAPI(title="AI Assignment Review API")
 
-# Setup CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,9 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-import logging
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -37,106 +34,141 @@ else:
     except Exception as e:
         logger.error(f"❌ Failed to initialize OpenAI client: {e}")
 
-class ReviewRequest(BaseModel):
-    google_docs_url: str
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB limit
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-def extract_doc_id(url: str):
-    """Extracts the document ID from a Google Docs URL."""
-    match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-    if not match:
-        raise HTTPException(status_code=400, detail="Invalid Google Docs URL")
-    return match.group(1)
 
-def fetch_doc_content(doc_id: str):
-    """Fetches text content from a Google Doc using the export URL."""
-    export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+def extract_text_from_txt(content: bytes) -> str:
+    return content.decode("utf-8", errors="ignore")
+
+
+def extract_text_from_pdf(content: bytes) -> str:
     try:
-        response = requests.get(export_url)
-        response.raise_for_status()
-        return response.text
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PDF support requires 'pypdf'. Install it via pip.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse PDF: {str(e)}")
+
+
+def extract_text_from_docx(content: bytes) -> str:
+    try:
+        import docx
+        doc = docx.Document(io.BytesIO(content))
+        return "\n".join([para.text for para in doc.paragraphs])
+    except ImportError:
+        raise HTTPException(status_code=500, detail="DOCX support requires 'python-docx'. Install it via pip.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse DOCX: {str(e)}")
+
 
 @app.post("/review")
-async def review_assignment(request: ReviewRequest):
+async def review_assignment(file: UploadFile = File(...)):
     if not client:
         raise HTTPException(
-            status_code=500, 
-            detail="AI Service is currently unavailable. Please ensure the OPENAI_API_KEY is configured in Render environment variables."
+            status_code=500,
+            detail="AI Service is currently unavailable. Please ensure the OPENAI_API_KEY is configured."
         )
-    
-    doc_id = extract_doc_id(request.google_docs_url)
-    content = fetch_doc_content(doc_id)
-    
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="Document is empty")
 
-    prompt = f"""
-    You are an expert academic reviewer. Review the following assignment content and provide feedback in the following format:
-    
-    Strengths:
-    [List the key strengths of the assignment]
-    
-    Improvements:
-    [List areas where the student can improve]
-    
-    Score: [X]/10
-    
-    Assignment Content:
-    {content[:10000]}  # Truncate to avoid token limits if necessary
-    """
+    # Validate file extension
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported File Type: '{ext}'. Please upload a .pdf, .docx, or .txt file."
+        )
+
+    # Read file content
+    content_bytes = await file.read()
+
+    # Validate file size
+    if len(content_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Maximum allowed size is 5 MB."
+        )
+
+    # Extract text based on file type
+    if ext == ".txt":
+        text = extract_text_from_txt(content_bytes)
+    elif ext == ".pdf":
+        text = extract_text_from_pdf(content_bytes)
+    elif ext == ".docx":
+        text = extract_text_from_docx(content_bytes)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported File Type")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Document appears to be empty or could not be parsed.")
+
+    # Truncate to avoid excessive token usage
+    text_for_ai = text[:12000]
+
+    prompt = f"""You are an expert academic reviewer and educator. Analyze the following assignment content thoroughly and produce a structured JSON report.
+
+Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
+{{
+  "score": "X/10",
+  "summary": "2-3 sentence summary of what the assignment is about",
+  "strengths": ["strength 1", "strength 2", "strength 3"],
+  "weak_areas": ["weakness 1", "weakness 2"],
+  "concept_understanding": "paragraph evaluating how well concepts are understood",
+  "structure_clarity": "paragraph evaluating structure and clarity of the assignment",
+  "grammar_writing_quality": "paragraph evaluating grammar and writing quality",
+  "suggestions_for_improvement": ["suggestion 1", "suggestion 2", "suggestion 3"],
+  "improved_version_suggestions": "paragraph with specific rewriting/restructuring suggestions to make this assignment excellent"
+}}
+
+Assignment Content:
+{text_for_ai}
+"""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful academic assistant."},
+                {"role": "system", "content": "You are an expert academic reviewer. Always return valid JSON only, with no markdown fences or extra text."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
+            temperature=0.5,
         )
-        
-        full_review = response.choices[0].message.content
-        
-        # Simple parsing logic
-        strengths = ""
-        improvements = ""
-        score = "0/10"
-        summary = ""
-        
-        sections = re.split(r"(Strengths:|Improvements:|Score:)", full_review)
-        for i in range(1, len(sections), 2):
-            label = sections[i].strip()
-            text = sections[i+1].strip() if i+1 < len(sections) else ""
-            if label == "Strengths:":
-                strengths = text
-            elif label == "Improvements:":
-                improvements = text
-            elif label == "Score:":
-                # Extract only the numeric part (e.g., 6/10)
-                # Look for digits/digits pattern
-                score_match = re.search(r"(\d+[\s\-/]*\d+)", text)
-                if score_match:
-                    score = score_match.group(1).strip()
-                    # The rest of the text in the score section becomes the summary
-                    # Remove the score part and any leading punctuation/formatting
-                    remaining = text.replace(score, "").strip()
-                    summary = re.sub(r"^[* \-\/\:]+", "", remaining).strip()
-                else:
-                    score = text.split('\n')[0].strip()
-                    summary = "\n".join(text.split('\n')[1:]).strip()
+
+        raw = response.choices[0].message.content.strip()
+
+        # Strip markdown fences if model wrapped in them
+        raw = re.sub(r"^```json\s*", "", raw)
+        raw = re.sub(r"^```\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+        report = json.loads(raw)
 
         return {
-            "strengths": strengths.strip(),
-            "improvements": improvements.strip(),
-            "score": score,
-            "summary": summary
+            "filename": filename,
+            "score": report.get("score", "N/A"),
+            "summary": report.get("summary", ""),
+            "strengths": report.get("strengths", []),
+            "weak_areas": report.get("weak_areas", []),
+            "concept_understanding": report.get("concept_understanding", ""),
+            "structure_clarity": report.get("structure_clarity", ""),
+            "grammar_writing_quality": report.get("grammar_writing_quality", ""),
+            "suggestions_for_improvement": report.get("suggestions_for_improvement", []),
+            "improved_version_suggestions": report.get("improved_version_suggestions", ""),
         }
+
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse error: {e}. Raw response: {raw}")
+        raise HTTPException(status_code=500, detail="Failed to analyze document: AI returned an unexpected response format.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Review failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze document: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
-    # Respect PORT environment variable for deployment (default to 8000 for local dev)
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

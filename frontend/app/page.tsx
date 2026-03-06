@@ -1,310 +1,894 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
-interface ReviewResult {
+interface ReportResult {
   id: string;
-  url: string;
+  filename: string;
   timestamp: string;
-  strengths: string;
-  improvements: string;
   score: string;
-  summary?: string;
+  summary: string;
+  strengths: string[];
+  weak_areas: string[];
+  concept_understanding: string;
+  structure_clarity: string;
+  grammar_writing_quality: string;
+  suggestions_for_improvement: string[];
+  improved_version_suggestions: string;
+}
+
+const BACKEND_URL = "https://fwai-assignment-review-4.onrender.com";
+
+function ScoreBadge({ score }: { score: string }) {
+  const num = parseInt(score.split("/")[0]) || 0;
+  const color =
+    num >= 8 ? "#00E5FF" : num >= 6 ? "#7C5CFF" : num >= 4 ? "#FFAD00" : "#FF4D4D";
+  return (
+    <div
+      className="score-badge"
+      style={{ "--score-color": color } as React.CSSProperties}
+    >
+      <div className="score-label">SCORE</div>
+      <div className="score-value" style={{ color }}>
+        {score}
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  icon,
+  color,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="section-card" style={{ "--accent": color } as React.CSSProperties}>
+      <div className="section-header">
+        <span className="section-icon" style={{ color }}>
+          {icon}
+        </span>
+        <h3 className="section-title" style={{ color }}>
+          {title}
+        </h3>
+      </div>
+      <div className="section-body">{children}</div>
+    </div>
+  );
 }
 
 export default function Home() {
-  const [url, setUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [history, setHistory] = useState<ReviewResult[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [progressLabel, setProgressLabel] = useState("");
+  const [history, setHistory] = useState<ReportResult[]>([]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load history from localStorage on mount
+  // Load history from localStorage
   useEffect(() => {
-    const savedHistory = localStorage.getItem("review_history");
-    if (savedHistory) {
+    const saved = localStorage.getItem("assignment_vault");
+    if (saved) {
       try {
-        const parsed = JSON.parse(savedHistory);
+        const parsed = JSON.parse(saved);
         setHistory(parsed);
         if (parsed.length > 0) setActiveIndex(0);
-      } catch (e) {
-        console.error("Failed to parse history", e);
-      }
+      } catch {}
     }
   }, []);
 
   // Save history to localStorage
   useEffect(() => {
-    localStorage.setItem("review_history", JSON.stringify(history));
+    localStorage.setItem("assignment_vault", JSON.stringify(history));
   }, [history]);
 
-  const handleReview = async () => {
-    if (!url) {
-      setError("Please enter a Google Docs link.");
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) validateAndSetFile(dropped);
+  }, []);
+
+  const validateAndSetFile = (f: File) => {
+    setError("");
+    const ext = f.name.split(".").pop()?.toLowerCase();
+    if (!["pdf", "docx", "txt"].includes(ext || "")) {
+      setError("Unsupported File Type. Please upload a .pdf, .docx, or .txt file.");
       return;
     }
+    if (f.size > 5 * 1024 * 1024) {
+      setError("File too large. Maximum allowed size is 5 MB.");
+      return;
+    }
+    setFile(f);
+  };
 
+  const simulateProgress = () => {
+    const stages = [
+      { pct: 15, label: "Reading document..." },
+      { pct: 35, label: "Extracting content..." },
+      { pct: 55, label: "Sending to AI engine..." },
+      { pct: 75, label: "Generating intelligence report..." },
+      { pct: 90, label: "Finalizing analysis..." },
+    ];
+    let i = 0;
+    setProgress(5);
+    setProgressLabel("Initializing...");
+    const interval = setInterval(() => {
+      if (i < stages.length) {
+        setProgress(stages[i].pct);
+        setProgressLabel(stages[i].label);
+        i++;
+      } else {
+        clearInterval(interval);
+      }
+    }, 900);
+    return interval;
+  };
+
+  const handleAnalyze = async () => {
+    if (!file) {
+      setError("Please upload an assignment file first.");
+      return;
+    }
     setLoading(true);
     setError("");
+    setRevealed(false);
+
+    const interval = simulateProgress();
+
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
-      const response = await fetch("https://fwai-assignment-review-4.onrender.com/review", {
+      const res = await fetch(`${BACKEND_URL}/review`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ google_docs_url: url }),
+        body: formData,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to fetch review");
+      clearInterval(interval);
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to analyze document");
       }
 
-      const data = await response.json();
+      const data = await res.json();
+      setProgress(100);
+      setProgressLabel("Analysis complete!");
 
-      const newReview: ReviewResult = {
+      const newReport: ReportResult = {
         id: Date.now().toString(),
-        url: url,
+        filename: file.name,
         timestamp: new Date().toLocaleString(),
-        ...data
+        ...data,
       };
 
-      const updatedHistory = [newReview, ...history].slice(0, 10); // Keep last 10
-      setHistory(updatedHistory);
+      const updated = [newReport, ...history].slice(0, 15);
+      setHistory(updated);
       setActiveIndex(0);
-      setUrl("");
+      setFile(null);
+
+      setTimeout(() => {
+        setRevealed(true);
+      }, 400);
     } catch (err: any) {
+      clearInterval(interval);
       setError(err.message || "An unexpected error occurred.");
     } finally {
-      setLoading(false);
+      setTimeout(() => {
+        setLoading(false);
+        setProgress(0);
+        setProgressLabel("");
+      }, 600);
+    }
+  };
+
+  const clearVault = () => {
+    if (confirm("Clear all reports from the Intelligence Vault?")) {
+      setHistory([]);
+      setActiveIndex(null);
+      localStorage.removeItem("assignment_vault");
     }
   };
 
   const activeResult = activeIndex !== null ? history[activeIndex] : null;
 
   return (
-    <main className="min-h-screen bg-[#0a0a0c] text-white flex flex-col md:flex-row relative overflow-hidden">
-      {/* Background Decorative Element */}
-      <div className="absolute top-[-15%] left-[-15%] w-[50%] h-[50%] bg-indigo-500/10 rounded-full blur-[160px] pointer-events-none animate-pulse" />
-      <div className="absolute bottom-[-15%] right-[-15%] w-[50%] h-[50%] bg-purple-500/10 rounded-full blur-[160px] pointer-events-none animate-pulse" />
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap');
 
-      {/* Sidebar - History */}
-      <aside className="w-full md:w-80 border-r border-white/5 bg-white/[0.01] backdrop-blur-3xl p-6 flex flex-col z-20 overflow-y-auto max-h-screen md:h-screen sticky top-0">
-        <div className="mb-10">
-          <h2 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400 tracking-tight italic uppercase">
-            Sessions
-          </h2>
-          <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-[0.2em] opacity-60">Intelligence Vault</p>
-        </div>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        <div className="space-y-4 flex-1">
-          {history.length === 0 ? (
-            <div className="text-gray-700 text-xs text-center py-20 border border-dashed border-white/5 rounded-3xl">
-              No intelligence logs yet.
-            </div>
-          ) : (
-            history.map((item, index) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveIndex(index)}
-                className={`w-full text-left p-5 rounded-3xl transition-all border outline-none group ${activeIndex === index
-                  ? "bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20"
-                  : "bg-white/[0.02] border-white/5 hover:bg-white/[0.05] hover:border-white/10"
-                  }`}
-              >
-                <div className="font-bold text-[10px] truncate text-gray-400 mb-3 opacity-60 italic group-hover:opacity-100 transition-opacity">
-                  ID: {item.url.split('d/')[1]?.substring(0, 10) || 'REVI-LOG'}
-                </div>
-                <div className="flex justify-between items-center gap-3">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] text-gray-500 uppercase tracking-widest font-black font-mono">
-                      {item.timestamp.split(',')[0]}
-                    </span>
-                    <span className="text-[9px] text-gray-600 font-bold uppercase">
-                      {item.timestamp.split(',')[1]?.trim() || ''}
-                    </span>
+        body {
+          background: #0B0F1A;
+          color: #E6EAF2;
+          font-family: 'Inter', system-ui, sans-serif;
+          min-height: 100vh;
+          overflow-x: hidden;
+        }
+
+        /* ========== LAYOUT ========== */
+        .app {
+          display: flex;
+          min-height: 100vh;
+          position: relative;
+        }
+
+        .bg-glow-1 {
+          position: fixed; top: -20%; left: -10%;
+          width: 600px; height: 600px;
+          background: radial-gradient(circle, rgba(124,92,255,0.15) 0%, transparent 70%);
+          border-radius: 50%; pointer-events: none; z-index: 0;
+          animation: pulse-slow 6s ease-in-out infinite alternate;
+        }
+        .bg-glow-2 {
+          position: fixed; bottom: -20%; right: -10%;
+          width: 500px; height: 500px;
+          background: radial-gradient(circle, rgba(0,229,255,0.10) 0%, transparent 70%);
+          border-radius: 50%; pointer-events: none; z-index: 0;
+          animation: pulse-slow 8s ease-in-out infinite alternate-reverse;
+        }
+        @keyframes pulse-slow {
+          from { opacity: 0.6; transform: scale(1); }
+          to { opacity: 1; transform: scale(1.1); }
+        }
+
+        /* ========== SIDEBAR ========== */
+        .sidebar {
+          width: 280px;
+          min-height: 100vh;
+          background: rgba(18,24,38,0.85);
+          border-right: 1px solid rgba(255,255,255,0.06);
+          backdrop-filter: blur(24px);
+          display: flex;
+          flex-direction: column;
+          padding: 28px 20px;
+          position: sticky;
+          top: 0;
+          height: 100vh;
+          overflow-y: auto;
+          z-index: 10;
+          flex-shrink: 0;
+        }
+
+        .sidebar-logo {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 32px;
+        }
+        .sidebar-logo-icon {
+          width: 36px; height: 36px;
+          background: linear-gradient(135deg, #7C5CFF, #00E5FF);
+          border-radius: 10px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 18px;
+        }
+        .sidebar-logo-text {
+          font-size: 14px; font-weight: 800;
+          background: linear-gradient(135deg, #7C5CFF, #00E5FF);
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          letter-spacing: 0.05em; text-transform: uppercase;
+        }
+
+        .sidebar-section-title {
+          font-size: 9px; font-weight: 700;
+          color: rgba(230,234,242,0.3);
+          letter-spacing: 0.2em; text-transform: uppercase;
+          margin-bottom: 12px; margin-top: 4px;
+        }
+
+        .vault-list { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+        .vault-empty {
+          text-align: center; padding: 48px 16px;
+          border: 1px dashed rgba(255,255,255,0.08);
+          border-radius: 16px; color: rgba(255,255,255,0.2);
+          font-size: 12px; line-height: 1.6;
+        }
+        .vault-empty-icon { font-size: 28px; margin-bottom: 8px; }
+
+        .vault-item {
+          width: 100%; text-align: left;
+          padding: 12px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.05);
+          background: rgba(255,255,255,0.02);
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex; flex-direction: column; gap: 5px;
+        }
+        .vault-item:hover { background: rgba(124,92,255,0.08); border-color: rgba(124,92,255,0.2); }
+        .vault-item.active { background: rgba(124,92,255,0.12); border-color: rgba(124,92,255,0.35); }
+
+        .vault-item-name {
+          font-size: 11px; font-weight: 700;
+          color: #E6EAF2;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .vault-item-meta {
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        .vault-item-date { font-size: 9px; color: rgba(230,234,242,0.35); font-family: 'JetBrains Mono', monospace; }
+        .vault-item-score {
+          font-size: 10px; font-weight: 800;
+          padding: 2px 8px; border-radius: 6px;
+          background: rgba(124,92,255,0.2); color: #7C5CFF;
+          border: 1px solid rgba(124,92,255,0.3);
+        }
+
+        .clear-btn {
+          margin-top: 20px;
+          width: 100%; padding: 10px;
+          border-radius: 12px;
+          border: 1px dashed rgba(255,77,77,0.2);
+          background: transparent;
+          color: rgba(255,77,77,0.5);
+          font-size: 10px; font-weight: 700;
+          cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase;
+          transition: all 0.2s ease;
+        }
+        .clear-btn:hover { background: rgba(255,77,77,0.07); color: #FF4D4D; border-color: rgba(255,77,77,0.3); }
+
+        /* ========== MAIN PANEL ========== */
+        .main-panel {
+          flex: 1;
+          padding: 40px 48px;
+          overflow-y: auto;
+          z-index: 5;
+          position: relative;
+          max-width: 900px;
+        }
+
+        /* ========== HEADER ========== */
+        .header { margin-bottom: 40px; }
+        .header-badge {
+          display: inline-flex; align-items: center; gap: 8px;
+          padding: 6px 14px; border-radius: 100px;
+          background: rgba(124,92,255,0.1);
+          border: 1px solid rgba(124,92,255,0.25);
+          font-size: 10px; font-weight: 700;
+          color: #7C5CFF; letter-spacing: 0.15em;
+          text-transform: uppercase; margin-bottom: 20px;
+        }
+        .pulse-dot {
+          width: 7px; height: 7px; border-radius: 50%;
+          background: #7C5CFF;
+          animation: ping 1.5s ease-in-out infinite;
+        }
+        @keyframes ping {
+          0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(124,92,255,0.5); }
+          50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(124,92,255,0); }
+        }
+
+        .header h1 {
+          font-size: clamp(36px, 5vw, 60px);
+          font-weight: 900; line-height: 1.05;
+          background: linear-gradient(135deg, #fff 30%, rgba(230,234,242,0.5) 100%);
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          margin-bottom: 12px;
+        }
+        .header p {
+          color: rgba(230,234,242,0.45);
+          font-size: 15px; font-weight: 500; line-height: 1.6;
+          max-width: 480px;
+        }
+
+        /* ========== UPLOAD CARD ========== */
+        .upload-card {
+          background: rgba(18,24,38,0.7);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 28px;
+          padding: 32px;
+          backdrop-filter: blur(24px);
+          margin-bottom: 32px;
+        }
+        .upload-card-title { font-size: 13px; font-weight: 700; color: rgba(230,234,242,0.5); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 20px; }
+
+        .drop-zone {
+          border: 2px dashed rgba(124,92,255,0.3);
+          border-radius: 20px;
+          padding: 40px 24px;
+          text-align: center;
+          cursor: pointer;
+          transition: all 0.25s ease;
+          background: rgba(124,92,255,0.03);
+          position: relative;
+        }
+        .drop-zone:hover, .drop-zone.dragging {
+          border-color: rgba(124,92,255,0.65);
+          background: rgba(124,92,255,0.07);
+          box-shadow: 0 0 30px rgba(124,92,255,0.1);
+        }
+        .drop-zone.has-file {
+          border-color: rgba(0,229,255,0.4);
+          background: rgba(0,229,255,0.04);
+        }
+
+        .drop-icon {
+          width: 56px; height: 56px;
+          background: rgba(124,92,255,0.12);
+          border-radius: 16px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 26px; margin: 0 auto 16px;
+          border: 1px solid rgba(124,92,255,0.2);
+        }
+        .drop-title { font-size: 15px; font-weight: 700; color: #E6EAF2; margin-bottom: 6px; }
+        .drop-sub { font-size: 12px; color: rgba(230,234,242,0.3); margin-bottom: 16px; }
+        .drop-formats { font-size: 10px; color: rgba(124,92,255,0.7); font-family: 'JetBrains Mono', monospace; margin-top: 12px; }
+
+        .file-chosen {
+          display: flex; align-items: center; gap: 12px;
+          padding: 12px 16px;
+          background: rgba(0,229,255,0.08);
+          border: 1px solid rgba(0,229,255,0.2);
+          border-radius: 12px;
+          margin-top: 16px;
+        }
+        .file-chosen-icon { font-size: 20px; }
+        .file-chosen-name { font-size: 13px; font-weight: 600; color: #00E5FF; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-chosen-clear {
+          background: none; border: none; color: rgba(230,234,242,0.3); cursor: pointer; font-size: 16px; padding: 4px;
+          transition: color 0.2s;
+        }
+        .file-chosen-clear:hover { color: #FF4D4D; }
+
+        .upload-row { display: flex; gap: 12px; margin-top: 20px; align-items: center; }
+
+        .upload-file-btn {
+          padding: 12px 24px; border-radius: 14px;
+          border: 1px solid rgba(124,92,255,0.3);
+          background: rgba(124,92,255,0.1);
+          color: #7C5CFF; font-size: 13px; font-weight: 700;
+          cursor: pointer; transition: all 0.2s ease;
+          letter-spacing: 0.03em;
+        }
+        .upload-file-btn:hover { background: rgba(124,92,255,0.2); border-color: rgba(124,92,255,0.5); }
+
+        .analyze-btn {
+          flex: 1;
+          padding: 14px 28px;
+          border-radius: 16px;
+          border: none;
+          background: linear-gradient(135deg, #7C5CFF, #5A3FDB);
+          color: white;
+          font-size: 14px; font-weight: 800;
+          cursor: pointer;
+          letter-spacing: 0.08em; text-transform: uppercase;
+          transition: all 0.25s ease;
+          box-shadow: 0 0 30px rgba(124,92,255,0.3), 0 8px 24px rgba(0,0,0,0.3);
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        .analyze-btn:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 0 50px rgba(124,92,255,0.5), 0 12px 32px rgba(0,0,0,0.4);
+        }
+        .analyze-btn:active:not(:disabled) { transform: translateY(0); }
+        .analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .spinner {
+          width: 16px; height: 16px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ========== PROGRESS ========== */
+        .progress-wrapper { margin-top: 20px; }
+        .progress-bar-track {
+          height: 4px; border-radius: 4px;
+          background: rgba(255,255,255,0.06);
+          overflow: hidden; margin-bottom: 8px;
+        }
+        .progress-bar-fill {
+          height: 100%; border-radius: 4px;
+          background: linear-gradient(90deg, #7C5CFF, #00E5FF);
+          transition: width 0.6s ease;
+          box-shadow: 0 0 12px rgba(124,92,255,0.5);
+        }
+        .progress-label { font-size: 11px; color: rgba(230,234,242,0.4); font-family: 'JetBrains Mono', monospace; }
+
+        /* ========== ERROR ========== */
+        .error-box {
+          display: flex; align-items: flex-start; gap: 12px;
+          padding: 16px 20px;
+          border-radius: 14px;
+          background: rgba(255,77,77,0.08);
+          border: 1px solid rgba(255,77,77,0.2);
+          color: #FF6B6B;
+          font-size: 13px; font-weight: 600;
+          margin-top: 16px;
+          animation: shake 0.4s ease;
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20% { transform: translateX(-6px); }
+          40% { transform: translateX(6px); }
+          60% { transform: translateX(-4px); }
+          80% { transform: translateX(4px); }
+        }
+
+        /* ========== REPORT ========== */
+        .report-wrapper {
+          opacity: 0; transform: translateY(20px);
+          transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        .report-wrapper.visible { opacity: 1; transform: translateY(0); }
+
+        .report-header {
+          display: flex; align-items: flex-start; justify-content: space-between;
+          gap: 24px; flex-wrap: wrap;
+          margin-bottom: 32px;
+          padding-bottom: 28px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .report-title-area {}
+        .report-eyebrow {
+          font-size: 10px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+          color: rgba(124,92,255,0.8); margin-bottom: 8px;
+          display: flex; align-items: center; gap: 8px;
+        }
+        .report-eyebrow::before {
+          content: ''; display: block;
+          width: 20px; height: 2px;
+          background: linear-gradient(90deg, #7C5CFF, #00E5FF);
+          border-radius: 2px;
+        }
+        .report-h2 {
+          font-size: clamp(26px, 3vw, 38px);
+          font-weight: 900; color: #E6EAF2;
+          letter-spacing: -0.02em; line-height: 1.1;
+          margin-bottom: 8px;
+        }
+        .report-filename {
+          font-size: 11px; color: rgba(0,229,255,0.6);
+          font-family: 'JetBrains Mono', monospace;
+          display: flex; align-items: center; gap: 8px;
+        }
+        .report-filename::before {
+          content: ''; display: block; width: 6px; height: 6px;
+          border-radius: 50%; background: #00E5FF;
+          box-shadow: 0 0 8px rgba(0,229,255,0.5);
+        }
+
+        .score-badge {
+          background: rgba(18,24,38,0.9);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 24px;
+          padding: 24px 32px;
+          text-align: center;
+          backdrop-filter: blur(12px);
+          min-width: 160px;
+          box-shadow: 0 0 40px rgba(var(--score-color), 0.1);
+        }
+        .score-label {
+          font-size: 9px; font-weight: 700; letter-spacing: 0.25em;
+          color: rgba(230,234,242,0.3); text-transform: uppercase; margin-bottom: 6px;
+        }
+        .score-value {
+          font-size: 48px; font-weight: 900; line-height: 1;
+          text-shadow: 0 0 30px currentColor;
+        }
+
+        .summary-card {
+          background: rgba(124,92,255,0.06);
+          border: 1px solid rgba(124,92,255,0.15);
+          border-radius: 18px;
+          padding: 20px 24px;
+          margin-bottom: 28px;
+          font-size: 14px; line-height: 1.7;
+          color: rgba(230,234,242,0.75);
+        }
+        .summary-card strong { color: #7C5CFF; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; display: block; margin-bottom: 8px; }
+
+        .report-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
+          margin-bottom: 28px;
+        }
+        @media (max-width: 700px) { .report-grid { grid-template-columns: 1fr; } }
+
+        .section-card {
+          background: rgba(18,24,38,0.6);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 20px;
+          padding: 22px;
+          transition: border-color 0.2s ease;
+          position: relative;
+          overflow: hidden;
+        }
+        .section-card::before {
+          content: '';
+          position: absolute; top: 0; left: 0;
+          width: 3px; height: 100%;
+          background: var(--accent, #7C5CFF);
+          opacity: 0.5;
+        }
+        .section-card:hover { border-color: rgba(var(--accent-rgb, 124,92,255), 0.25); }
+
+        .section-header {
+          display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+        }
+        .section-icon { font-size: 16px; }
+        .section-title { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+
+        .section-body {
+          font-size: 13px; line-height: 1.7; color: rgba(230,234,242,0.65);
+        }
+
+        .tag-list { display: flex; flex-direction: column; gap: 8px; }
+        .tag {
+          display: flex; align-items: flex-start; gap: 10px;
+          font-size: 13px; color: rgba(230,234,242,0.7); line-height: 1.5;
+        }
+        .tag-bullet {
+          width: 18px; height: 18px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 9px; font-weight: 900; flex-shrink: 0;
+          margin-top: 2px;
+        }
+
+        .section-full {
+          background: rgba(18,24,38,0.6);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 20px; padding: 22px; margin-bottom: 20px;
+          position: relative; overflow: hidden;
+        }
+        .section-full::before {
+          content: ''; position: absolute; top: 0; left: 0;
+          width: 3px; height: 100%;
+          background: var(--accent, #7C5CFF); opacity: 0.5;
+        }
+
+        .no-report {
+          text-align: center; padding: 80px 24px;
+          color: rgba(230,234,242,0.2);
+        }
+        .no-report-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
+        .no-report p { font-size: 14px; }
+
+        @media (max-width: 860px) {
+          .sidebar { display: none; }
+          .main-panel { padding: 24px 20px; }
+        }
+      `}</style>
+
+      <div className="app">
+        <div className="bg-glow-1" />
+        <div className="bg-glow-2" />
+
+        {/* ========== SIDEBAR ========== */}
+        <aside className="sidebar">
+          <div className="sidebar-logo">
+            <div className="sidebar-logo-icon">🧠</div>
+            <span className="sidebar-logo-text">AI Vault</span>
+          </div>
+
+          <div className="sidebar-section-title">Intelligence Vault · {history.length} Reports</div>
+
+          <div className="vault-list">
+            {history.length === 0 ? (
+              <div className="vault-empty">
+                <div className="vault-empty-icon">📂</div>
+                No reports yet.<br />Upload an assignment to begin.
+              </div>
+            ) : (
+              history.map((item, idx) => (
+                <button
+                  key={item.id}
+                  className={`vault-item ${activeIndex === idx ? "active" : ""}`}
+                  onClick={() => { setActiveIndex(idx); setRevealed(true); }}
+                >
+                  <div className="vault-item-name">{item.filename}</div>
+                  <div className="vault-item-meta">
+                    <span className="vault-item-date">{item.timestamp.split(",")[0]}</span>
+                    <span className="vault-item-score">{item.score}</span>
                   </div>
-                  <span className="text-sm font-black text-indigo-100 bg-indigo-500/30 px-3 py-1.5 rounded-xl border border-indigo-400/30 whitespace-nowrap shadow-lg shadow-indigo-500/10">
-                    {item.score.length > 5 ? item.score.substring(0, 5) : item.score}
-                  </span>
-                </div>
-              </button>
-            ))
+                </button>
+              ))
+            )}
+          </div>
+
+          {history.length > 0 && (
+            <button className="clear-btn" onClick={clearVault}>
+              🗑 Clear Vault
+            </button>
           )}
-        </div>
+        </aside>
 
-        {history.length > 0 && (
-          <button
-            onClick={() => { if (confirm("Clear all review logs?")) { setHistory([]); setActiveIndex(null); localStorage.removeItem("review_history"); } }}
-            className="mt-8 text-gray-500 hover:text-red-400 text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 px-2 py-4 border border-dashed border-white/5 rounded-2xl hover:border-red-500/20 hover:bg-red-500/5"
-          >
-            Clear Intelligence Vault
-          </button>
-        )}
-      </aside>
-
-      {/* Main Content */}
-      <div className="flex-1 p-6 md:p-12 lg:p-16 overflow-y-auto relative z-10 flex flex-col items-center">
-        <div className="max-w-5xl w-full space-y-12 pb-20">
+        {/* ========== MAIN PANEL ========== */}
+        <main className="main-panel">
           {/* Header */}
-          <header className="text-center space-y-6 animate-fade-in">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-black uppercase tracking-widest mb-2 shadow-inner">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-              </span>
+          <header className="header">
+            <div className="header-badge">
+              <span className="pulse-dot" />
               AI Active Engine
             </div>
-            <h1 className="text-5xl md:text-8xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white via-white to-gray-700 leading-tight">
-              Assignment Intelligence
-            </h1>
-            <p className="text-gray-400 text-lg md:text-xl max-w-2xl mx-auto font-medium leading-relaxed">
-              Deep-learning analysis of academic assignments to maintain a continuous trajectory of growth.
-            </p>
+            <h1>Assignment<br />Intelligence</h1>
+            <p>AI-powered assignment evaluation — upload your document and receive a complete structured review instantly.</p>
           </header>
 
-          {/* Submission Card */}
-          <div className="glass-card p-6 md:p-12 space-y-8 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] animate-fade-in [animation-delay:200ms] border border-white/10 rounded-[3rem] bg-gradient-to-b from-white/[0.04] to-transparent backdrop-blur-2xl">
-            <div className="flex flex-col md:flex-row gap-6">
-              <div className="flex-1 relative group">
-                <input
-                  type="text"
-                  placeholder="Paste public Google Docs URL..."
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="w-full bg-black/60 border border-white/10 rounded-3xl px-8 py-6 text-white placeholder:text-gray-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 transition-all font-bold text-lg pr-16 group-hover:border-white/20"
-                />
-                <div className="absolute right-6 top-1/2 -translate-y-1/2 text-gray-700 group-focus-within:text-indigo-500 transition-colors">
-                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
-                </div>
-              </div>
+          {/* Upload Card */}
+          <div className="upload-card">
+            <div className="upload-card-title">Upload Assignment</div>
 
-              <button
-                onClick={handleReview}
-                disabled={loading}
-                className="bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-700 hover:from-white hover:to-white hover:text-black text-white font-black px-12 py-6 rounded-3xl shadow-2xl shadow-indigo-500/30 active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-4 whitespace-nowrap min-w-[240px] text-xl uppercase tracking-widest border border-white/10"
-              >
+            <div
+              className={`drop-zone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+            >
+              <div className="drop-icon">{file ? "✅" : "📄"}</div>
+              <div className="drop-title">{file ? file.name : "Drag & Drop your file here"}</div>
+              <div className="drop-sub">{file ? "File ready for analysis" : "or click to browse"}</div>
+              <div className="drop-formats">.PDF · .DOCX · .TXT · max 5MB</div>
+            </div>
+
+            {file && (
+              <div className="file-chosen">
+                <span className="file-chosen-icon">📎</span>
+                <span className="file-chosen-name">{file.name}</span>
+                <button className="file-chosen-clear" onClick={(e) => { e.stopPropagation(); setFile(null); }}>✕</button>
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt"
+              style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files?.[0]) validateAndSetFile(e.target.files[0]); }}
+            />
+
+            <div className="upload-row">
+              <button className="upload-file-btn" onClick={() => fileInputRef.current?.click()}>
+                📂 Upload File
+              </button>
+              <button className="analyze-btn" onClick={handleAnalyze} disabled={loading || !file}>
                 {loading ? (
-                  <>
-                    <div className="w-7 h-7 border-4 border-black/10 border-t-black rounded-full animate-spin" />
-                    Analyzing
-                  </>
+                  <><span className="spinner" /> Analyzing…</>
                 ) : (
-                  "Initiate Scan"
+                  <><span>⚡</span> Analyze Assignment</>
                 )}
               </button>
             </div>
 
+            {loading && (
+              <div className="progress-wrapper">
+                <div className="progress-bar-track">
+                  <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="progress-label">{progressLabel}</div>
+              </div>
+            )}
+
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-8 py-5 rounded-[2rem] text-sm font-black uppercase tracking-widest animate-shake text-center flex items-center justify-center gap-3">
-                <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                {error}
+              <div className="error-box">
+                <span>⚠️</span>
+                <span>{error}</span>
               </div>
             )}
           </div>
 
-          {/* Result Display */}
+          {/* ========== REPORT ========== */}
           {activeResult ? (
-            <div className="space-y-12 animate-fade-in [animation-delay:400ms] w-full">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-10 border-b border-white/5 pb-10">
-                <div className="space-y-6 flex-1 min-w-0">
-                  <div className="space-y-2">
-                    <h2 className="text-4xl md:text-5xl font-black text-white tracking-tighter italic uppercase">Intelligence Report</h2>
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-gray-500 text-xs font-bold tracking-widest uppercase">
-                      <div className="hidden sm:block w-2.5 h-2.5 rounded-full bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.5)] shrink-0" />
-                      <span className="shrink-0 text-white/40">Document ID:</span>
-                      <span className="text-indigo-400 break-all font-mono opacity-80 hover:opacity-100 transition-opacity">
-                        {activeResult.url}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Summary Display with client-side split safeguard */}
-                  {(() => {
-                    const displaySummary = activeResult.summary || "";
-                    // If summary is empty and score looks like it contains the summary (for older records)
-                    let finalSummary = displaySummary;
-                    let finalScore = activeResult.score;
-
-                    if (!displaySummary && activeResult.score.includes(" ")) {
-                      const parts = activeResult.score.split(/\s+/);
-                      finalScore = parts[0];
-                      finalSummary = parts.slice(1).join(" ").replace(/^\**\s*Overall,?\s*/i, "");
-                    }
-
-                    return finalSummary ? (
-                      <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-2xl p-6 italic">
-                        <p className="text-gray-300 text-sm md:text-base leading-relaxed font-medium">
-                          <span className="text-indigo-400 font-bold not-italic font-mono mr-2">OVR:</span>
-                          {finalSummary.replace(/^\**\s*/, "")}
-                        </p>
-                      </div>
-                    ) : null;
-                  })()}
+            <div className={`report-wrapper ${revealed ? "visible" : ""}`}>
+              {/* Report Header */}
+              <div className="report-header">
+                <div className="report-title-area">
+                  <div className="report-eyebrow">Assignment Intelligence Report</div>
+                  <h2 className="report-h2">Analysis Complete</h2>
+                  <div className="report-filename">{activeResult.filename}</div>
                 </div>
-
-                <div className="bg-white/[0.04] border border-white/10 rounded-[2.5rem] p-8 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl min-w-[200px] lg:self-start">
-                  <div className="text-[10px] uppercase text-gray-600 font-black tracking-[0.4em] mb-4">Metric Score</div>
-                  <div className="text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-indigo-400 animate-gradient whitespace-nowrap leading-none pb-2">
-                    {(() => {
-                      // Extract just the number for the large display
-                      const match = activeResult.score.match(/(\d+[\s\-/]*\d+)/);
-                      return match ? match[1] : activeResult.score.split(' ')[0];
-                    })()}
-                  </div>
-                </div>
+                <ScoreBadge score={activeResult.score} />
               </div>
 
-              <div className="grid md:grid-cols-2 gap-12 items-start">
-                <section className="space-y-6">
-                  <h3 className="text-green-500 font-black flex items-center gap-4 text-2xl tracking-tighter uppercase italic">
-                    <div className="w-12 h-12 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center shadow-lg shadow-green-500/10">
-                      <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    Engine Positives
-                  </h3>
-                  <div className="glass-card p-10 bg-white/[0.01] border-white/10 text-gray-300 whitespace-pre-wrap leading-[1.8] rounded-[3rem] text-lg shadow-2xl relative overflow-hidden group hover:border-green-500/30 transition-colors">
-                    <div className="absolute top-0 left-0 w-1.5 h-full bg-green-500/10 group-hover:bg-green-500/40 transition-all" />
-                    {activeResult.strengths}
-                  </div>
-                </section>
+              {/* Summary */}
+              {activeResult.summary && (
+                <div className="summary-card">
+                  <strong>Summary</strong>
+                  {activeResult.summary}
+                </div>
+              )}
 
-                <section className="space-y-6">
-                  <h3 className="text-amber-500 font-black flex items-center gap-4 text-2xl tracking-tighter uppercase italic">
-                    <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shadow-lg shadow-amber-500/10">
-                      <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    Vector Alignment
-                  </h3>
-                  <div className="glass-card p-10 bg-white/[0.01] border-white/10 text-gray-300 whitespace-pre-wrap leading-[1.8] rounded-[3rem] text-lg shadow-2xl relative overflow-hidden group hover:border-amber-500/30 transition-colors">
-                    <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500/10 group-hover:bg-amber-500/40 transition-all" />
-                    {activeResult.improvements}
+              {/* 2-col grid: Strengths + Weak Areas */}
+              <div className="report-grid">
+                <SectionCard title="Strengths" icon="✓" color="#00E5A0">
+                  <div className="tag-list">
+                    {(activeResult.strengths || []).map((s, i) => (
+                      <div key={i} className="tag">
+                        <div className="tag-bullet" style={{ background: "rgba(0,229,160,0.15)", color: "#00E5A0" }}>{i + 1}</div>
+                        <span>{s}</span>
+                      </div>
+                    ))}
                   </div>
-                </section>
+                </SectionCard>
+
+                <SectionCard title="Weak Areas" icon="△" color="#FFAD00">
+                  <div className="tag-list">
+                    {(activeResult.weak_areas || []).map((w, i) => (
+                      <div key={i} className="tag">
+                        <div className="tag-bullet" style={{ background: "rgba(255,173,0,0.15)", color: "#FFAD00" }}>{i + 1}</div>
+                        <span>{w}</span>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+              </div>
+
+              {/* Full-width sections */}
+              {activeResult.concept_understanding && (
+                <div className="section-full" style={{ "--accent": "#7C5CFF" } as React.CSSProperties}>
+                  <div className="section-header">
+                    <span className="section-icon">🧩</span>
+                    <h3 className="section-title" style={{ color: "#7C5CFF" }}>Concept Understanding</h3>
+                  </div>
+                  <div className="section-body">{activeResult.concept_understanding}</div>
+                </div>
+              )}
+
+              {activeResult.structure_clarity && (
+                <div className="section-full" style={{ "--accent": "#00E5FF" } as React.CSSProperties}>
+                  <div className="section-header">
+                    <span className="section-icon">📐</span>
+                    <h3 className="section-title" style={{ color: "#00E5FF" }}>Structure & Clarity</h3>
+                  </div>
+                  <div className="section-body">{activeResult.structure_clarity}</div>
+                </div>
+              )}
+
+              {activeResult.grammar_writing_quality && (
+                <div className="section-full" style={{ "--accent": "#A78BFA" } as React.CSSProperties}>
+                  <div className="section-header">
+                    <span className="section-icon">✏️</span>
+                    <h3 className="section-title" style={{ color: "#A78BFA" }}>Grammar & Writing Quality</h3>
+                  </div>
+                  <div className="section-body">{activeResult.grammar_writing_quality}</div>
+                </div>
+              )}
+
+              {/* 2-col: Suggestions + Improved Version */}
+              <div className="report-grid">
+                <SectionCard title="Suggestions for Improvement" icon="💡" color="#FFD166">
+                  <div className="tag-list">
+                    {(activeResult.suggestions_for_improvement || []).map((s, i) => (
+                      <div key={i} className="tag">
+                        <div className="tag-bullet" style={{ background: "rgba(255,209,102,0.15)", color: "#FFD166" }}>{i + 1}</div>
+                        <span>{s}</span>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+
+                <SectionCard title="Improved Version Suggestions" icon="🚀" color="#00E5FF">
+                  <div className="section-body">{activeResult.improved_version_suggestions}</div>
+                </SectionCard>
               </div>
             </div>
-
           ) : !loading && (
-            <div className="py-20 text-center space-y-4">
-              <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto opacity-20">
-                <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <p className="text-gray-600 font-medium">Ready for your first analysis</p>
+            <div className="no-report">
+              <div className="no-report-icon">🔍</div>
+              <p>Upload an assignment to generate your<br /><strong>Assignment Intelligence Report</strong></p>
             </div>
           )}
-        </div>
+        </main>
       </div>
-    </main>
+    </>
   );
 }
