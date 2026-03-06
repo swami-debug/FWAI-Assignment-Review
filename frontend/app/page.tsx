@@ -211,7 +211,10 @@ export default function Home() {
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-          background: #0B0F1A;
+          background: #050A18;
+          background-image:
+            radial-gradient(ellipse 80% 50% at 50% -10%, rgba(124,92,255,0.18) 0%, transparent 60%),
+            radial-gradient(ellipse 60% 40% at 100% 100%, rgba(0,229,255,0.08) 0%, transparent 55%);
           color: #E6EAF2;
           font-family: 'Inter', system-ui, sans-serif;
           min-height: 100vh;
@@ -227,15 +230,15 @@ export default function Home() {
 
         .bg-glow-1 {
           position: fixed; top: -20%; left: -10%;
-          width: 600px; height: 600px;
-          background: radial-gradient(circle, rgba(124,92,255,0.15) 0%, transparent 70%);
+          width: 700px; height: 700px;
+          background: radial-gradient(circle, rgba(124,92,255,0.20) 0%, transparent 70%);
           border-radius: 50%; pointer-events: none; z-index: 0;
           animation: pulse-slow 6s ease-in-out infinite alternate;
         }
         .bg-glow-2 {
           position: fixed; bottom: -20%; right: -10%;
-          width: 500px; height: 500px;
-          background: radial-gradient(circle, rgba(0,229,255,0.10) 0%, transparent 70%);
+          width: 600px; height: 600px;
+          background: radial-gradient(circle, rgba(0,229,255,0.12) 0%, transparent 70%);
           border-radius: 50%; pointer-events: none; z-index: 0;
           animation: pulse-slow 8s ease-in-out infinite alternate-reverse;
         }
@@ -248,9 +251,9 @@ export default function Home() {
         .sidebar {
           width: 280px;
           min-height: 100vh;
-          background: rgba(18,24,38,0.85);
-          border-right: 1px solid rgba(255,255,255,0.06);
-          backdrop-filter: blur(24px);
+          background: rgba(6, 11, 28, 0.88);
+          border-right: 1px solid rgba(124,92,255,0.12);
+          backdrop-filter: blur(28px);
           display: flex;
           flex-direction: column;
           padding: 28px 20px;
@@ -387,12 +390,13 @@ export default function Home() {
 
         /* ========== UPLOAD CARD ========== */
         .upload-card {
-          background: rgba(18,24,38,0.7);
-          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(8,14,32,0.75);
+          border: 1px solid rgba(124,92,255,0.14);
           border-radius: 28px;
           padding: 32px;
-          backdrop-filter: blur(24px);
+          backdrop-filter: blur(28px);
           margin-bottom: 32px;
+          box-shadow: 0 0 60px rgba(124,92,255,0.05);
         }
         .upload-card-title { font-size: 13px; font-weight: 700; color: rgba(230,234,242,0.5); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 20px; }
 
@@ -566,14 +570,14 @@ export default function Home() {
         }
 
         .score-badge {
-          background: rgba(18,24,38,0.9);
-          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(6,11,26,0.92);
+          border: 1px solid rgba(124,92,255,0.2);
           border-radius: 24px;
           padding: 24px 32px;
           text-align: center;
-          backdrop-filter: blur(12px);
+          backdrop-filter: blur(16px);
           min-width: 160px;
-          box-shadow: 0 0 40px rgba(var(--score-color), 0.1);
+          box-shadow: 0 0 40px rgba(124,92,255,0.12);
         }
         .score-label {
           font-size: 9px; font-weight: 700; letter-spacing: 0.25em;
@@ -604,8 +608,8 @@ export default function Home() {
         @media (max-width: 700px) { .report-grid { grid-template-columns: 1fr; } }
 
         .section-card {
-          background: rgba(18,24,38,0.6);
-          border: 1px solid rgba(255,255,255,0.06);
+          background: rgba(7,12,28,0.75);
+          border: 1px solid rgba(255,255,255,0.07);
           border-radius: 20px;
           padding: 22px;
           transition: border-color 0.2s ease;
@@ -644,8 +648,8 @@ export default function Home() {
         }
 
         .section-full {
-          background: rgba(18,24,38,0.6);
-          border: 1px solid rgba(255,255,255,0.06);
+          background: rgba(7,12,28,0.75);
+          border: 1px solid rgba(255,255,255,0.07);
           border-radius: 20px; padding: 22px; margin-bottom: 20px;
           position: relative; overflow: hidden;
         }
