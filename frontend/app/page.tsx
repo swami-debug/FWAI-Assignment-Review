@@ -72,6 +72,8 @@ export default function Home() {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [revealed, setRevealed] = useState(false);
+  const [excelDownloadUrl, setExcelDownloadUrl] = useState<string | null>(null);
+  const [excelFileName, setExcelFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load history from localStorage
@@ -101,8 +103,8 @@ export default function Home() {
   const validateAndSetFile = (f: File) => {
     setError("");
     const ext = f.name.split(".").pop()?.toLowerCase();
-    if (!["pdf", "docx", "txt"].includes(ext || "")) {
-      setError("Unsupported File Type. Please upload a .pdf, .docx, or .txt file.");
+    if (!["pdf", "docx", "txt", "xlsx"].includes(ext || "")) {
+      setError("Unsupported File Type. Please upload a .pdf, .docx, .txt, or .xlsx file.");
       return;
     }
     if (f.size > 5 * 1024 * 1024) {
@@ -143,14 +145,18 @@ export default function Home() {
     setLoading(true);
     setError("");
     setRevealed(false);
+    setExcelDownloadUrl(null);
 
     const interval = simulateProgress();
 
     const formData = new FormData();
     formData.append("file", file);
 
+    const isExcel = file.name.endsWith(".xlsx");
+    const endpoint = isExcel ? `${BACKEND_URL}/review-excel` : `${BACKEND_URL}/review`;
+
     try {
-      const res = await fetch(`${BACKEND_URL}/review`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         body: formData,
       });
@@ -158,8 +164,20 @@ export default function Home() {
       clearInterval(interval);
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ detail: "Failed to process document" }));
         throw new Error(err.detail || "Failed to analyze document");
+      }
+
+      if (isExcel) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        setExcelDownloadUrl(url);
+        setExcelFileName(`reviewed_${file.name}`);
+        setProgress(100);
+        setProgressLabel("Excel processing complete!");
+        setRevealed(true);
+        setFile(null);
+        return;
       }
 
       const data = await res.json();
@@ -665,6 +683,34 @@ export default function Home() {
         .no-report-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
         .no-report p { font-size: 14px; color: rgba(26,26,46,0.35); }
 
+        /* ========== EXCEL CARD ========== */
+        .excel-download-card {
+          background: linear-gradient(135deg, #00B4D8, #0077B6);
+          border-radius: 24px;
+          padding: 32px;
+          color: white;
+          text-align: center;
+          margin-bottom: 32px;
+          box-shadow: 0 10px 40px rgba(0,180,216,0.3);
+          animation: slideUp 0.6s ease;
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .excel-icon { font-size: 40px; margin-bottom: 16px; }
+        .excel-title { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+        .excel-sub { font-size: 14px; opacity: 0.9; margin-bottom: 24px; }
+        .download-btn {
+          display: inline-flex; align-items: center; gap: 12px;
+          padding: 16px 32px; border-radius: 100px;
+          background: white; color: #0077B6;
+          font-weight: 800; text-decoration: none;
+          transition: transform 0.2s, box-shadow 0.2s;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .download-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
+
         @media (max-width: 860px) {
           .sidebar { display: none; }
           .main-panel { padding: 24px 20px; }
@@ -740,7 +786,7 @@ export default function Home() {
               <div className="drop-icon">{file ? "✅" : "📄"}</div>
               <div className="drop-title">{file ? file.name : "Drag & Drop your file here"}</div>
               <div className="drop-sub">{file ? "File ready for analysis" : "or click to browse"}</div>
-              <div className="drop-formats">.PDF · .DOCX · .TXT · max 5MB</div>
+              <div className="drop-formats">.PDF · .DOCX · .TXT · .XLSX · max 5MB</div>
             </div>
 
             {file && (
@@ -754,7 +800,7 @@ export default function Home() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.docx,.txt,.xlsx"
               style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.[0]) validateAndSetFile(e.target.files[0]); }}
             />
@@ -788,6 +834,22 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {/* Excel Result */}
+          {excelDownloadUrl && (
+            <div className="excel-download-card">
+              <div className="excel-icon">📊</div>
+              <div className="excel-title">Excel Review Complete</div>
+              <div className="excel-sub">AI reviews have been successfully inserted into your file.</div>
+              <a 
+                href={excelDownloadUrl} 
+                download={excelFileName}
+                className="download-btn"
+              >
+                📥 Download Processed Excel
+              </a>
+            </div>
+          )}
 
           {/* ========== REPORT ========== */}
           {activeResult ? (

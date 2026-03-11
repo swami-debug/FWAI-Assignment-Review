@@ -7,6 +7,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from dotenv import load_dotenv
+import pandas as pd
+from fastapi.responses import StreamingResponse
 
 load_dotenv()
 
@@ -65,6 +67,71 @@ def extract_text_from_docx(content: bytes) -> str:
         raise HTTPException(status_code=500, detail="DOCX support requires 'python-docx'. Install it via pip.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse DOCX: {str(e)}")
+
+
+@app.post("/review-excel")
+async def review_excel(file: UploadFile = File(...)):
+    if not client:
+        raise HTTPException(status_code=500, detail="AI Service unavailable.")
+
+    filename = file.filename or ""
+    if not filename.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload an .xlsx file.")
+
+    content = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read Excel: {str(e)}")
+
+    if "AI Review" not in df.columns:
+        df["AI Review"] = ""
+
+    # Identify content column
+    potential_cols = ["Assignment", "Content", "Submission", "Text", "Description", "Assignment Content"]
+    content_col = next((c for c in potential_cols if c in df.columns), None)
+    
+    if not content_col:
+        # If no obvious content column, use the first non-AI Review column as a fallback
+        other_cols = [c for c in df.columns if c != "AI Review"]
+        if other_cols:
+            content_col = other_cols[0]
+        else:
+            raise HTTPException(status_code=400, detail="No content column found in Excel file.")
+
+    logger.info(f"Processing Excel: using column '{content_col}' for reviews.")
+
+    for index, row in df.iterrows():
+        text = str(row[content_col]) if pd.notnull(row[content_col]) else ""
+        if text.strip() and not str(row.get("AI Review", "")).strip():
+            try:
+                # Concise review for Excel
+                prompt = f"Provide a concise academic review (max 3 sentences) for this assignment content: {text[:4000]}"
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are an expert academic reviewer. Provide a brief, professional evaluation."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5,
+                )
+                review = response.choices[0].message.content.strip()
+                df.at[index, "AI Review"] = review
+            except Exception as e:
+                logger.error(f"Error reviewing row {index}: {e}")
+                df.at[index, "AI Review"] = "Error generating review."
+
+    # Export to BytesIO
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=reviewed_{filename}"}
+    )
 
 
 @app.post("/review")
