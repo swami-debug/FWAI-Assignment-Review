@@ -111,15 +111,25 @@ async def review_excel(file: UploadFile = File(...)):
         text = str(row[content_col]) if pd.notnull(row[content_col]) else ""
         if text.strip() and not str(row.get("AI Review", "")).strip():
             try:
-                # Concise review for Excel
-                prompt = f"Provide a concise academic review (max 3 sentences) for this assignment content: {text[:4000]}"
+                # Refined review prompt for bulk processing
+                prompt = f"""Evaluate the following assignment content and provide a constructive review (3-5 sentences). 
+Focus on:
+1. The clarity of evaluation/content.
+2. Specific highlights or improvements mentioned (e.g., functionality, design, usability).
+3. The overall value of the suggestions provided.
+
+Assignment Content: {text[:4000]}"""
+                
                 response = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are an expert academic reviewer. Provide a brief, professional evaluation."},
+                        {
+                            "role": "system", 
+                            "content": "You are an expert academic reviewer. Provide professional, constructive, and detailed evaluations in a paragraph format. Highlight specific improvements and the overall quality of the work."
+                        },
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.5,
+                    temperature=0.6,
                 )
                 review = response.choices[0].message.content.strip()
                 df.at[index, "AI Review"] = review
