@@ -103,8 +103,8 @@ export default function Home() {
   const validateAndSetFile = (f: File) => {
     setError("");
     const ext = f.name.split(".").pop()?.toLowerCase();
-    if (!["pdf", "docx", "txt", "xlsx"].includes(ext || "")) {
-      setError("Unsupported File Type. Please upload a .pdf, .docx, .txt, or .xlsx file.");
+    if (!["pdf", "docx", "txt", "xlsx", "csv"].includes(ext || "")) {
+      setError("Unsupported File Type. Please upload a .pdf, .docx, .txt, .xlsx, or .csv file.");
       return;
     }
     if (f.size > 5 * 1024 * 1024) {
@@ -152,8 +152,8 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", file);
 
-    const isExcel = file.name.endsWith(".xlsx");
-    const endpoint = isExcel ? `${BACKEND_URL}/review-excel` : `${BACKEND_URL}/review`;
+    const isBulk = file.name.endsWith(".xlsx") || file.name.endsWith(".csv");
+    const endpoint = isBulk ? `${BACKEND_URL}/review-excel` : `${BACKEND_URL}/review`;
 
     try {
       const res = await fetch(endpoint, {
@@ -168,13 +168,15 @@ export default function Home() {
         throw new Error(err.detail || "Failed to analyze document");
       }
 
-      if (isExcel) {
+      if (isBulk) {
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
         setExcelDownloadUrl(url);
-        setExcelFileName(`reviewed_${file.name}`);
+        const baseName = file.name.substring(0, file.name.lastIndexOf('.'));
+        const ext = file.name.substring(file.name.lastIndexOf('.'));
+        setExcelFileName(`reviewed_${baseName}${ext}`);
         setProgress(100);
-        setProgressLabel("Excel processing complete!");
+        setProgressLabel(`${ext.substring(1).toUpperCase()} processing complete!`);
         setRevealed(true);
         setFile(null);
         return;
@@ -786,7 +788,7 @@ export default function Home() {
               <div className="drop-icon">{file ? "✅" : "📄"}</div>
               <div className="drop-title">{file ? file.name : "Drag & Drop your file here"}</div>
               <div className="drop-sub">{file ? "File ready for analysis" : "or click to browse"}</div>
-              <div className="drop-formats">.PDF · .DOCX · .TXT · .XLSX · max 5MB</div>
+              <div className="drop-formats">.PDF · .DOCX · .TXT · .XLSX · .CSV · max 5MB</div>
             </div>
 
             {file && (
@@ -800,7 +802,7 @@ export default function Home() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.docx,.txt,.xlsx"
+              accept=".pdf,.docx,.txt,.xlsx,.csv"
               style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.[0]) validateAndSetFile(e.target.files[0]); }}
             />

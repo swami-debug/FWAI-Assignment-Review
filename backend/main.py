@@ -75,14 +75,20 @@ async def review_excel(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="AI Service unavailable.")
 
     filename = file.filename or ""
-    if not filename.endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Please upload an .xlsx file.")
+    is_csv = filename.lower().endswith(".csv")
+    is_xlsx = filename.lower().endswith(".xlsx")
+    
+    if not (is_csv or is_xlsx):
+        raise HTTPException(status_code=400, detail="Please upload a .csv or .xlsx file.")
 
     content = await file.read()
     try:
-        df = pd.read_excel(io.BytesIO(content))
+        if is_csv:
+            df = pd.read_csv(io.BytesIO(content))
+        else:
+            df = pd.read_excel(io.BytesIO(content))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read Excel: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
 
     if "AI Review" not in df.columns:
         df["AI Review"] = ""
@@ -123,14 +129,25 @@ async def review_excel(file: UploadFile = File(...)):
 
     # Export to BytesIO
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
+    if is_csv:
+        df.to_csv(output, index=False)
+        media_type = "text/csv"
+        ext = ".csv"
+    else:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ext = ".xlsx"
+    
     output.seek(0)
+    
+    # Remove original extension from filename for the reviewed version
+    base_name = os.path.splitext(filename)[0]
 
     return StreamingResponse(
         output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=reviewed_{filename}"}
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=reviewed_{base_name}{ext}"}
     )
 
 
