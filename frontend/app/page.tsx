@@ -17,7 +17,7 @@ interface ReportResult {
   improved_version_suggestions: string;
 }
 
-const BACKEND_URL = "https://fwai-assignment-review-4.onrender.com";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://fwai-assignment-review-4.onrender.com";
 
 function ScoreBadge({ score }: { score: string }) {
   const num = parseInt(score.split("/")[0]) || 0;
