@@ -90,18 +90,16 @@ async def review_excel(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
 
-    df_metrics = ["DF1", "DF2", "DF3", "DF4", "DF5", "DF6", "DF7", "DF8", "DF9", "DF10", "DF11", "DF12"]
-    for metric in df_metrics:
-        if metric not in df.columns:
-            df[metric] = ""
+    if "AI Review" not in df.columns:
+        df["AI Review"] = ""
 
     # Identify content column
     potential_cols = ["Assignment", "Content", "Submission", "Text", "Description", "Assignment Content"]
     content_col = next((c for c in potential_cols if c in df.columns), None)
     
     if not content_col:
-        # If no obvious content column, use the first non-metric column as a fallback
-        other_cols = [c for c in df.columns if c not in df_metrics]
+        # If no obvious content column, use the first non-AI Review column as a fallback
+        other_cols = [c for c in df.columns if c != "AI Review"]
         if other_cols:
             content_col = other_cols[0]
         else:
@@ -111,16 +109,14 @@ async def review_excel(file: UploadFile = File(...)):
 
     for index, row in df.iterrows():
         text = str(row[content_col]) if pd.notnull(row[content_col]) else ""
-        # Check if row needs processing (if any metric is missing)
-        needs_processing = any(not str(row.get(m, "")).strip() for m in df_metrics)
-        
-        if text.strip() and needs_processing:
+        if text.strip() and not str(row.get("AI Review", "")).strip():
             try:
-                # Refined review prompt for bulk processing with DF metrics
-                prompt = f"""Evaluate the following assignment content across 12 dimensions: DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9, DF10, DF11, and DF12.
-Provide a professional, constructive, and detailed evaluation for each dimension (1-3 sentences each).
-
-Return ONLY valid JSON with keys "DF1" through "DF12".
+                # Refined review prompt for bulk processing
+                prompt = f"""Evaluate the following assignment content and provide a constructive review (3-5 sentences). 
+Focus on:
+1. The clarity of evaluation/content.
+2. Specific highlights or improvements mentioned (e.g., functionality, design, usability).
+3. The overall value of the suggestions provided.
 
 Assignment Content: {text[:4000]}"""
                 
@@ -129,28 +125,17 @@ Assignment Content: {text[:4000]}"""
                     messages=[
                         {
                             "role": "system", 
-                            "content": "You are an expert academic reviewer. Always return valid JSON only, with no markdown fences or extra text."
+                            "content": "You are an expert academic reviewer. Provide professional, constructive, and detailed evaluations in a paragraph format. Highlight specific improvements and the overall quality of the work."
                         },
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.6,
                 )
-                raw_response = response.choices[0].message.content.strip()
-                
-                # Strip markdown fences if present
-                raw_response = re.sub(r"^```json\s*", "", raw_response)
-                raw_response = re.sub(r"^```\s*", "", raw_response)
-                raw_response = re.sub(r"\s*```$", "", raw_response)
-                
-                review_data = json.loads(raw_response)
-                
-                for metric in df_metrics:
-                    df.at[index, metric] = review_data.get(metric, "N/A")
-                    
+                review = response.choices[0].message.content.strip()
+                df.at[index, "AI Review"] = review
             except Exception as e:
                 logger.error(f"Error reviewing row {index}: {e}")
-                for metric in df_metrics:
-                    df.at[index, metric] = "Error generating review."
+                df.at[index, "AI Review"] = "Error generating review."
 
     # Export to BytesIO
     output = io.BytesIO()
